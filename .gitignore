@@ -1,0 +1,10 @@
+node_modules/
+dist/
+
+# Local environment configuration
+.env
+.env.*
+!.env.example
+
+# Local Python virtual environments
+.venv/
