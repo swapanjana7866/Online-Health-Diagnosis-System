@@ -12,3 +12,11 @@ dist/
 # Python generated files
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime and local tooling files
+*.log
+.DS_Store
+.vscode/
