@@ -1,0 +1,12 @@
+{
+  "sample-booking-id": {
+    "bookingId": "sample-booking-id",
+    "patientName": "Sample Patient",
+    "doctorName": "Dr. Maya Patel",
+    "specialty": "General Physician",
+    "date": "2026-10-12",
+    "time": "09:00",
+    "reason": "Sample consultation reason",
+    "status": "pending"
+  }
+}

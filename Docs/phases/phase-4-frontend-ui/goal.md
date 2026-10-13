@@ -58,13 +58,13 @@ Build a rich, responsive, and accessible user interface for the symptom check-in
 ---
 
 ## 4. Definition of Done (DoD) Checklist
-- [ ] User can search, add, and remove symptoms effortlessly using both mouse and keyboard.
-- [ ] Submitting symptoms triggers a loading indicator and renders prediction results.
-- [ ] Top-3 predictions and confidence percentages are clearly visible and formatted.
-- [ ] Medical disclaimer is prominently displayed on the result view and cannot be hidden.
-- [ ] Past diagnoses load with pagination and can be inspected in a modal/drawer.
-- [ ] Zero unhandled errors or console warnings in browser developer tools.
-- [ ] Tested and verified on mobile screen widths (375px) and desktop (1280px).
+- [x] User can search, add, and remove symptoms effortlessly using both mouse and keyboard.
+- [x] Submitting symptoms triggers a loading indicator and renders prediction results.
+- [x] Top-3 predictions and confidence percentages are clearly visible and formatted.
+- [x] Medical disclaimer is prominently displayed on the result view and cannot be hidden.
+- [x] Past diagnoses load with pagination and can be inspected in a modal/drawer.
+- [x] Zero unhandled errors or console warnings in browser developer tools.
+- [x] Tested and verified on mobile screen widths (375px) and desktop (1280px).
 
 ---
 

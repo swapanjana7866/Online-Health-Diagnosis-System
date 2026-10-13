@@ -67,6 +67,25 @@ def train():
         json.dump(feature_cols, f, indent=2)
     print(f"[Training] Saved feature ordering to: {features_output_path}")
 
+    # Held-out discrimination + calibration metrics, stored next to the model
+    # so the API can always report confidence values together with their
+    # measured accuracy and calibration (evaluate.py is the audit entry point).
+    try:
+        from evaluate import compute_metrics
+
+        diseases_path = os.path.join(current_dir, 'diseases.json')
+        with open(diseases_path, 'r', encoding='utf-8') as f:
+            diseases_metadata = json.load(f)
+        metrics = compute_metrics(clf, list(X_test), list(y_test), feature_cols, diseases_metadata)
+        metrics_output_path = os.path.join(current_dir, 'validation_metrics.json')
+        with open(metrics_output_path, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=2)
+        print(f"[Training] Saved validation metrics to: {metrics_output_path}")
+        print(f"[Training] Held-out top-1 {metrics['accuracy_top1_pct']}% | "
+              f"top-3 {metrics['accuracy_top3_pct']}% | ECE {metrics['ece_10bin']}")
+    except Exception as metrics_error:
+        print(f"[Training] Warning: could not compute validation metrics: {metrics_error}")
+
     print("\n[Training] Training and artifact serialization completed successfully!")
 
 if __name__ == '__main__':

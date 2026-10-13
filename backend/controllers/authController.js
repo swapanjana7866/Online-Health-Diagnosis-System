@@ -5,7 +5,12 @@ import { JWT_EXPIRES_IN, BCRYPT_SALT_ROUNDS } from '../config/constants.js';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
 
 const createToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET || 'carepath_default_secret_key_32chars', {
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    // Fail fast instead of silently signing with an insecure default.
+    throw new Error('JWT_SECRET is not configured. Set it in backend/.env.');
+  }
+  return jwt.sign({ id }, jwtSecret, {
     expiresIn: JWT_EXPIRES_IN
   });
 };

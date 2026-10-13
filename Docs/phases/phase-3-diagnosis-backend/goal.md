@@ -95,11 +95,11 @@ Integrate the Node.js API Gateway with the Python ML microservice and MongoDB At
 ---
 
 ## 4. Definition of Done (DoD) Checklist
-- [ ] Mongoose schema validates required fields and enforces `{ userId: 1, createdAt: -1 }` index.
-- [ ] `POST /api/diagnosis/predict` successfully calls Python ML service and persists document.
-- [ ] Simulating an ML microservice crash triggers the fallback mechanism without failing the API request.
-- [ ] A user cannot access or delete another user's diagnosis record (enforces 403 / 404 security checks).
-- [ ] History query uses `.lean()` and pagination limits (max 50 records per request).
+- [x] Mongoose schema validates required fields and enforces `{ userId: 1, createdAt: -1 }` index.
+- [x] `POST /api/diagnosis/predict` successfully calls Python ML service and persists document.
+- [x] Simulating an ML microservice crash triggers the fallback mechanism without failing the API request.
+- [x] A user cannot access or delete another user's diagnosis record (enforces 403 / 404 security checks).
+- [x] History query uses `.lean()` and pagination limits (max 50 records per request).
 
 ---
 

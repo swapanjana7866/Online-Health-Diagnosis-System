@@ -88,6 +88,16 @@ flowchart TD
 - **Decision:** The Node API Gateway implements a 3-second timeout on the internal ML call.
 - **Rationale:** If the ML service is cold-starting or temporarily unavailable, the API does **not** crash or return a 500. Instead, it returns a supportive heuristic fallback with severity-based self-care advice and prompts the user to consult a healthcare provider.
 
+### ADR-05: Symptom-Grounded Prediction Engine with Gemini Candidate Explanations (amended)
+- **Decision:** The predicted condition for the disease-prediction flow (`POST /api/diagnoses/predict` and chatbot triage inference) is always grounded by the **Python ML microservice** (ADR-01, validated `SymptomDiseaseClassifier`) or — when it is unreachable — the local heuristic overlap engine (ADR-04). Google Gemini (official `@google/genai` SDK, default model `gemini-3.6-flash`) is used **only to explain the engine's candidate conditions** (supporting/missing symptoms, self-care steps, red-flag warning signs); Gemini never chooses the diagnosis and never supplies a confidence value. `PREDICTION_PROVIDER=ml` disables external Gemini calls in favour of local rule-based explanations. Unrecognized or insufficient input returns a clarification response (HTTP 400 / limited assessment) instead of a condition.
+- **Rationale (amended after accuracy review):**
+  1. *Reproducibility:* LLM free-generation returned fluent but arbitrary conditions for unrelated or misspelled input, and the heuristic fallback previously returned a fixed default trio — both broke symptom-grounded prediction.
+  2. *Honest confidence:* Only the validated classifier reports a probability (held-out n=960: top-1 99.69%, top-3 100%, ECE 0.003; see `ml-service/model/evaluate.py`); heuristic/rule results are labelled as preliminary assessments, never probabilities.
+  3. *Best-in-class explanations:* Gemini still produces rich, context-aware candidate explanations, self-care steps, and red-flag warning signs — as explanation, not diagnosis.
+  2. *Resilience preserved:* Every Gemini failure mode (missing `GEMINI_API_KEY`, timeout, rate limit, invalid response, provider outage) is mapped to a safe error code and degrades to the ML microservice and then the local heuristic engine — never a 500 crash.
+  3. *Privacy by design:* Only symptom names, duration, and self-reported discomfort level are sent to Gemini. No names, demographics, notes, or diagnosis history leave the gateway. The API key is server-side only and never shipped to the frontend.
+  4. *Honest outputs:* Gemini output is constrained by a structured-output schema and re-validated server-side (strings capped, enums allow-listed, confidence clamped to an estimated 10–95 range and never presented as a confirmed diagnosis). No consensus/"dual AI" metrics are invented when no second model comparison exists.
+
 ---
 
 ## 3. Detailed Component Breakdown
@@ -110,7 +120,7 @@ flowchart TD
   - `routes/`: Explicit URL endpoint routing.
   - `middleware/`: Authentication (`authMiddleware.js`), rate limiting (`rateLimiter.js`), security headers (`helmet`), error handler (`errorHandler.js`).
   - `controllers/`: Request extraction, validation result checking, and orchestration.
-  - `services/`: External ML HTTP bridge (`mlService.js`) and database query helpers.
+  - `services/`: Gemini prediction provider (`geminiService.js`), provider orchestrator with ML/heuristic fallback (`predictionService.js`), external ML HTTP bridge (`mlService.js`), and chat engine (`chatEngine.js`).
   - `models/`: Mongoose schemas and indexes.
   - `config/`: Database connection (`db.js`) and constants (`constants.js`).
 
@@ -147,6 +157,7 @@ sequenceDiagram
     participant FE as React Frontend
     participant API as Node.js Gateway
     participant DB as MongoDB Atlas
+    participant Gemini as Google Gemini API (@google/genai)
     participant ML as Python ML Service
 
     User->>FE: Selects symptoms ["chills", "fever", "cough"] & clicks Diagnose
@@ -154,14 +165,21 @@ sequenceDiagram
     FE->>API: POST /api/diagnosis/predict (Header: Bearer JWT)
     API->>API: authMiddleware verifies JWT signature
     API->>API: Validates body schema
-    API->>ML: POST http://ml-service:8000/predict { symptoms: [...] }
-    
-    alt ML Service Healthy (< 3000ms)
-        ML->>ML: Multi-hot encodes symptoms vector
-        ML->>ML: model.predict_proba() -> Top 3 conditions + confidence
-        ML-->>API: 200 OK { primary: "Common Cold", confidence: 88.4, top3: [...] }
-    else ML Service Timeout or Error
-        API->>API: Trigger fallback heuristic engine
+    API->>Gemini: generateContent(gemini-3.6-flash, { symptoms, duration, discomfort }) — server-side GEMINI_API_KEY
+
+    alt Gemini Healthy (< 12000ms)
+        Gemini-->>API: Structured JSON assessment (schema-constrained)
+        API->>API: Validate & clamp model output server-side
+    else Gemini Unconfigured / Timeout / Rate Limit / Invalid / Outage
+        API->>ML: POST http://ml-service:8000/predict { symptoms: [...] }
+
+        alt ML Service Healthy (< 3000ms)
+            ML->>ML: Multi-hot encodes symptoms vector
+            ML->>ML: model.predict_proba() -> Top 3 conditions + confidence
+            ML-->>API: 200 OK { primary: "Common Cold", confidence: 88.4, top3: [...] }
+        else ML Service Timeout or Error
+            API->>API: Trigger fallback heuristic engine
+        end
     end
 
     API->>DB: Diagnosis.create({ userId, symptoms, prediction, confidence, ... })
@@ -219,4 +237,4 @@ sequenceDiagram
    - Gateway: `GET /api/health` returns `{ status: "ok", service: "api-gateway", timestamp }`.
    - ML Service: `GET /health` returns `{ status: "ok", model_loaded: true, symptoms_count: 132 }`.
 3. **Pagination Defense:** History endpoint `/api/diagnosis/history` enforces `page` and `limit` (max 50 items per page) to prevent unbounded memory allocation.
-4. **Environment Integrity:** System checks for required environment variables (`MONGO_URI`, `JWT_SECRET`, `ML_SERVICE_URL`) on process initialization, failing fast if any are absent.
+4. **Environment Integrity:** System checks for required environment variables (`MONGO_URI`, `JWT_SECRET`) on process initialization, failing fast if any are absent. Prediction provider configuration (`PREDICTION_PROVIDER`, `GEMINI_API_KEY`, `GEMINI_MODEL`) is validated at startup with non-fatal warnings — requests gracefully fall back to the ML/heuristic engine when Gemini is unconfigured.

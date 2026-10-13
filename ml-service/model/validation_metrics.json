@@ -1,0 +1,16 @@
+{
+  "n_test": 960,
+  "n_classes": 40,
+  "accuracy_top1": 0.9969,
+  "accuracy_top3": 1.0,
+  "accuracy_top1_pct": 99.69,
+  "accuracy_top3_pct": 100.0,
+  "nll": 0.0064,
+  "brier_score": 0.0023,
+  "ece_10bin": 0.003,
+  "mean_top1_probability": 0.9992,
+  "rerank_accuracy_pct": 99.69,
+  "rerank_flips_better": 0,
+  "rerank_flips_worse": 0,
+  "n_total": 4800
+}
