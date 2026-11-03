@@ -3,6 +3,7 @@ import Diagnosis from '../models/Diagnosis.js';
 import { getSymptomsList, MANDATORY_DISCLAIMER } from '../services/mlService.js';
 import { runPrediction } from '../services/predictionService.js';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
+import { isValidUserId } from '../utils/userId.js';
 import {
   CARE_RECOMMENDATIONS,
   DEFAULT_SYMPTOM_DURATION,
@@ -11,10 +12,7 @@ import {
   CONFIDENCE_BASIS
 } from '../config/constants.js';
 
-/**
- * GET /api/diagnoses/symptoms
- * Retrieves master list of selectable symptoms
- */
+
 export const getSymptoms = async (_req, res, next) => {
   try {
     const symptoms = await getSymptomsList();
@@ -24,12 +22,11 @@ export const getSymptoms = async (_req, res, next) => {
   }
 };
 
-/**
- * POST /api/diagnoses/predict
- * Evaluates patient symptoms with the configured prediction provider
- * (Google Gemini by default, ML microservice/heuristic fallback), persists the
- * record into MongoDB Atlas, and returns it inside the standard API envelope.
- */
+
+
+
+
+
 export const createDiagnosis = async (req, res, next) => {
   try {
     const { symptoms, duration, severity: clientSeverity, notes } = req.body;
@@ -81,13 +78,13 @@ export const createDiagnosis = async (req, res, next) => {
     // produce a real prediction for it).
     const isLowConfidence = prediction.low_confidence === true;
 
-    // 3. Persist diagnosis record into MongoDB Atlas
-    const diagnosis = await Diagnosis.create({
-      user: req.user._id,
+    // 3. Persist diagnosis records only for users with database ObjectIds.
+    const diagnosisFields = {
       symptoms,
       predictedDisease: primaryDisease,
       confidence,
       confidenceBasis,
+      
       severity,
       topPredictions: prediction.top_predictions?.length > 0 ? prediction.top_predictions : (insights?.geminiTopPredictions || []),
       description,
@@ -102,40 +99,45 @@ export const createDiagnosis = async (req, res, next) => {
       providerFallbackReason: fallbackReason,
       geminiInsights: insights || null,
       geminiEnriched: insights?.geminiEnriched === true
-    });
+    };
+    const diagnosis = isValidUserId(req.user?._id)
+      ? await Diagnosis.create({ user: req.user._id, ...diagnosisFields })
+      : null;
+    const result = diagnosis || { ...diagnosisFields, _id: null, user: null };
 
-    return sendSuccess(res, 201, 'Diagnosis evaluated and saved successfully', {
-      id: diagnosis._id,
-      _id: diagnosis._id,
-      user: diagnosis.user,
-      symptoms: diagnosis.symptoms,
-      recognized_symptoms: prediction.recognized_symptoms || diagnosis.symptoms,
+    return sendSuccess(res, diagnosis ? 201 : 200,
+      diagnosis ? 'Diagnosis evaluated and saved successfully' : 'Diagnosis evaluated successfully', {
+      id: result._id,
+      _id: result._id,
+      user: result.user,
+      symptoms: result.symptoms,
+      recognized_symptoms: prediction.recognized_symptoms || result.symptoms,
       unrecognized_symptoms: prediction.unrecognized_symptoms || [],
-      predictedDisease: diagnosis.predictedDisease,
-      primary_condition: diagnosis.predictedDisease,   // alias for frontend compatibility
-      confidence: diagnosis.confidence,
-      confidenceBasis: diagnosis.confidenceBasis,
-      severity: diagnosis.severity,
-      topPredictions: diagnosis.topPredictions,
-      description: diagnosis.description,
-      duration: diagnosis.duration,
-      notes: diagnosis.notes,
-      recommendation: diagnosis.recommendation,
-      disclaimer: diagnosis.disclaimer,
-      isFallback: diagnosis.isFallback,
-      predictionProvider: diagnosis.predictionProvider,
-      providerFallbackReason: diagnosis.providerFallbackReason || null,
+      predictedDisease: result.predictedDisease,
+      primary_condition: result.predictedDisease,   // alias for frontend compatibility
+      confidence: result.confidence,
+      confidenceBasis: result.confidenceBasis,
+      severity: result.severity,
+      topPredictions: result.topPredictions,
+      description: result.description,
+      duration: result.duration,
+      notes: result.notes,
+      recommendation: result.recommendation,
+      disclaimer: result.disclaimer,
+      isFallback: result.isFallback,
+      predictionProvider: result.predictionProvider,
+      providerFallbackReason: result.providerFallbackReason || null,
       low_confidence: isLowConfidence,
       low_confidence_message: isLowConfidence
         ? (prediction.low_confidence_message || LOW_CONFIDENCE_MESSAGE)
         : null,
-      createdAt: diagnosis.createdAt,
+      createdAt: result.createdAt || diagnosis?.createdAt || new Date(),
       // Gemini insights (candidate explanations; local rules when unavailable)
-      geminiInsights: diagnosis.geminiInsights || null,
-      geminiEnriched: diagnosis.geminiEnriched || false,
+      geminiInsights: result.geminiInsights || null,
+      geminiEnriched: result.geminiEnriched || false,
       combinedPrediction: insights?.combinedPrediction || {
-        predictedDisease: diagnosis.predictedDisease,
-        confidence: diagnosis.confidence,
+        predictedDisease: result.predictedDisease,
+        confidence: result.confidence,
         method: confidenceBasis === CONFIDENCE_BASIS.MODEL_PROBABILITY
           ? 'SymptomDiseaseClassifier probability'
           : 'Preliminary symptom assessment (no validated probability available)'
@@ -157,6 +159,13 @@ export const getDiagnoses = async (req, res, next) => {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const skip = (page - 1) * limit;
+
+    if (!isValidUserId(req.user?._id)) {
+      return sendSuccess(res, 200, 'Diagnoses retrieved successfully', {
+        diagnoses: [],
+        pagination: { total: 0, page, limit, totalPages: 1 }
+      });
+    }
 
     const filter = { user: req.user._id };
 
@@ -185,16 +194,15 @@ export const getDiagnoses = async (req, res, next) => {
   }
 };
 
-/**
- * GET /api/diagnoses/:id
- * Retrieves a single diagnosis record, enforcing user ownership.
- */
 export const getDiagnosis = async (req, res, next) => {
   try {
     const { id } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return sendError(res, 400, 'Invalid diagnosis ID format', { code: 'INVALID_ID' });
+    }
+    if (!isValidUserId(req.user?._id)) {
+      return sendError(res, 404, 'Diagnosis record not found', { code: 'NOT_FOUND' });
     }
 
     const diagnosis = await Diagnosis.findOne({ _id: id, user: req.user._id }).lean();
@@ -208,16 +216,16 @@ export const getDiagnosis = async (req, res, next) => {
   }
 };
 
-/**
- * DELETE /api/diagnoses/:id
- * Deletes a diagnosis record, verifying user ownership.
- */
+
 export const deleteDiagnosis = async (req, res, next) => {
   try {
     const { id } = req.params;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return sendError(res, 400, 'Invalid diagnosis ID format', { code: 'INVALID_ID' });
+    }
+    if (!isValidUserId(req.user?._id)) {
+      return sendError(res, 404, 'Diagnosis record not found or unauthorized', { code: 'NOT_FOUND' });
     }
 
     const deleted = await Diagnosis.findOneAndDelete({ _id: id, user: req.user._id });

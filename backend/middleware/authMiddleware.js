@@ -16,6 +16,13 @@ const protect = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.authRole = decoded.role || 'user';
+
+    if (req.authRole === 'admin') {
+      req.user = { _id: 'admin', name: 'Administrator', role: 'admin' };
+      return next();
+    }
+
     req.user = await User.findById(decoded.id);
     if (!req.user) {
       return sendError(res, 401, 'User associated with this token no longer exists', {

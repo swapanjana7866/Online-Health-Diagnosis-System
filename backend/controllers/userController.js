@@ -1,9 +1,10 @@
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
 
-const formatPublicUser = (user) => ({
+const formatPublicUser = (user, role = 'user') => ({
   id: user._id,
   name: user.name,
   email: user.email,
+  role,
   age: user.age,
   gender: user.gender,
   dateOfBirth: user.dateOfBirth,
@@ -19,7 +20,7 @@ const formatPublicUser = (user) => ({
  */
 export const getProfile = async (req, res) => {
   return sendSuccess(res, 200, 'User profile fetched successfully', {
-    user: formatPublicUser(req.user)
+    user: formatPublicUser(req.user, req.authRole)
   });
 };
 
@@ -41,7 +42,7 @@ export const updateProfile = async (req, res, next) => {
     const updatedUser = await req.user.save();
 
     return sendSuccess(res, 200, 'User profile updated successfully', {
-      user: formatPublicUser(updatedUser)
+      user: formatPublicUser(updatedUser, req.authRole)
     });
   } catch (error) {
     if (error.name === 'ValidationError') {

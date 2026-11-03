@@ -19,7 +19,7 @@ export const CHAT_MAX_SYMPTOMS = 30;
 export const DEFAULT_PAGE_SIZE = 10;
 export const MAX_PAGE_SIZE = 50;
 
-export const APPOINTMENT_STATUSES = ['pending', 'confirmed', 'completed', 'cancelled'];
+export const APPOINTMENT_STATUSES = ['pending', 'approved'];
 export const DEFAULT_DOCTOR_AVAILABILITY_SLOTS = ['09:00', '10:30', '14:00', '16:30'];
 export const DEFAULT_DOCTOR_CONSULTATION_FEE = 49;
 

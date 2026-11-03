@@ -4,7 +4,8 @@ import { authService } from '../services/api.js';
 
 export default function Login({ onSignup, onSuccess }) {
   const { signIn } = useAuth();
-  const [form, setForm] = useState({ email: '', password: '' });
+  const [form, setForm] = useState({ email: '', adminId: '', password: '' });
+  const [isAdminLogin, setIsAdminLogin] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -12,16 +13,18 @@ export default function Login({ onSignup, onSuccess }) {
     event.preventDefault();
     setError('');
 
-    if (!form.email || !form.password) {
-      setError('Please provide both email and password');
+    if ((isAdminLogin ? !form.adminId : !form.email) || !form.password) {
+      setError(isAdminLogin ? 'Please provide both admin ID and password' : 'Please provide both email and password');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const response = await authService.login(form);
+      const response = isAdminLogin
+        ? await authService.adminLogin({ id: form.adminId, password: form.password })
+        : await authService.login({ email: form.email, password: form.password });
       signIn(response);
-      onSuccess();
+      onSuccess(response?.data?.user?.role || 'user');
     } catch (err) {
       setError(err.message || 'Could not log in. Please check your credentials.');
     } finally {
@@ -39,15 +42,18 @@ export default function Login({ onSignup, onSuccess }) {
 
       <form onSubmit={handleSubmit} className="form-stack">
         <label>
-          Email address
+          {isAdminLogin ? 'Admin ID' : 'Email address'}
           <input
-            type="email"
+            type={isAdminLogin ? 'text' : 'email'}
             required
-            autoComplete="email"
-            value={form.email}
+            autoComplete={isAdminLogin ? 'username' : 'email'}
+            value={isAdminLogin ? form.adminId : form.email}
             disabled={isSubmitting}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-            placeholder="you@example.com"
+            onChange={(e) => setForm({
+              ...form,
+              [isAdminLogin ? 'adminId' : 'email']: e.target.value
+            })}
+            placeholder={isAdminLogin ? 'Admin ID' : 'you@example.com'}
           />
         </label>
 
@@ -91,6 +97,18 @@ export default function Login({ onSignup, onSuccess }) {
         New to Carepath?{' '}
         <button type="button" onClick={onSignup} disabled={isSubmitting}>
           Create an account
+        </button>
+      </p>
+      <p className="switch">
+        <button
+          type="button"
+          disabled={isSubmitting}
+          onClick={() => {
+            setIsAdminLogin((current) => !current);
+            setError('');
+          }}
+        >
+          {isAdminLogin ? 'User login' : 'Admin login'}
         </button>
       </p>
     </AuthShell>

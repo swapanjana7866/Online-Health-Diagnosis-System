@@ -7,19 +7,21 @@ import DiagnosisForm from '../pages/DiagnosisForm.jsx';
 import Profile from '../pages/Profile.jsx';
 import Appointments from '../pages/Appointments.jsx';
 import Chatbot from '../pages/Chatbot.jsx';
+import AdminPage from '../pages/AdminPage.jsx';
 import ProtectedRoute from './ProtectedRoute.jsx';
 
 function RootRedirect() {
-  const { isAuthenticated } = useAuth();
-  return <Navigate to={isAuthenticated ? '/dashboard' : '/login'} replace />;
+  const { isAuthenticated, user } = useAuth();
+  const authenticatedPath = user?.role === 'admin' ? '/admin' : '/dashboard';
+  return <Navigate to={isAuthenticated ? authenticatedPath : '/login'} replace />;
 }
 
 function AuthScreen({ mode = 'login' }) {
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
 
   if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={user?.role === 'admin' ? '/admin' : '/dashboard'} replace />;
   }
 
   if (mode === 'signup') {
@@ -34,9 +36,14 @@ function AuthScreen({ mode = 'login' }) {
   return (
     <Login
       onSignup={() => navigate('/signup')}
-      onSuccess={() => navigate('/dashboard')}
+      onSuccess={(role) => navigate(role === 'admin' ? '/admin' : '/dashboard')}
     />
   );
+}
+
+function ProtectedAdmin() {
+  const { user } = useAuth();
+  return user?.role === 'admin' ? <AdminPage /> : <Navigate to="/dashboard" replace />;
 }
 
 function ProtectedDashboard() {
@@ -143,6 +150,14 @@ export default function AppRouter() {
         element={
           <ProtectedRoute>
             <ProtectedAppointments />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute>
+            <ProtectedAdmin />
           </ProtectedRoute>
         }
       />

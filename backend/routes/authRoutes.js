@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { body } from 'express-validator';
-import { register, signup, login } from '../controllers/authController.js';
+import { register, signup, login, adminLogin } from '../controllers/authController.js';
 import { validate } from '../middleware/validateMiddleware.js';
-import { authLimiter } from '../middleware/rateLimiter.js';
+import { adminLoginLimiter, authLimiter } from '../middleware/rateLimiter.js';
 import { PASSWORD_REGEX, PASSWORD_ERROR_MESSAGE } from '../config/constants.js';
 
 const router = Router();
@@ -47,5 +47,6 @@ router.post('/signup', authLimiter, registerValidation, signup);
 
 // Login route
 router.post('/login', authLimiter, loginValidation, login);
+router.post('/admin-login', adminLoginLimiter, adminLogin);
 
 export default router;

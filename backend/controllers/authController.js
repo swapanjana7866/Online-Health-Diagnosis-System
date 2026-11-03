@@ -1,16 +1,17 @@
 import bcrypt from 'bcryptjs';
+import { createHash, timingSafeEqual } from 'crypto';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import { JWT_EXPIRES_IN, BCRYPT_SALT_ROUNDS } from '../config/constants.js';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
 
-const createToken = (id) => {
+const createToken = (id, role = 'user') => {
   const jwtSecret = process.env.JWT_SECRET;
   if (!jwtSecret) {
     // Fail fast instead of silently signing with an insecure default.
     throw new Error('JWT_SECRET is not configured. Set it in backend/.env.');
   }
-  return jwt.sign({ id }, jwtSecret, {
+  return jwt.sign({ ...(id ? { id } : {}), role }, jwtSecret, {
     expiresIn: JWT_EXPIRES_IN
   });
 };
@@ -19,6 +20,7 @@ const formatPublicUser = (user) => ({
   id: user._id,
   name: user.name,
   email: user.email,
+  role: 'user',
   age: user.age,
   gender: user.gender,
   dateOfBirth: user.dateOfBirth,
@@ -48,6 +50,7 @@ export const register = async (req, res, next) => {
       name,
       email,
       password: hashedPassword,
+      role: 'user',
       age: age ? Number(age) : undefined,
       gender: gender || undefined
     });
@@ -98,5 +101,57 @@ export const login = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+let adminConfigWarningLogged = false;
+
+const constantTimeMatch = (submitted, configured) => {
+  const submittedDigest = createHash('sha256').update(submitted).digest();
+  const configuredDigest = createHash('sha256').update(configured).digest();
+  return timingSafeEqual(submittedDigest, configuredDigest);
+};
+
+const cleanConfiguredValue = (value) => {
+  const trimmed = value.trim();
+  const first = trimmed[0];
+  const last = trimmed.at(-1);
+  const isQuoted = (first === '"' && last === '"') || (first === "'" && last === "'");
+  return (isQuoted ? trimmed.slice(1, -1) : trimmed).trim();
+};
+
+export const adminLogin = async (req, res, next) => {
+  try {
+    const adminId = cleanConfiguredValue(process.env.ADMIN_ID || '');
+    const adminPassword = cleanConfiguredValue(process.env.ADMIN_PASSWORD || '');
+
+    if (!adminId || !adminPassword) {
+      if (!adminConfigWarningLogged) {
+        console.warn('[Admin login] ADMIN_ID or ADMIN_PASSWORD is missing; admin login is disabled.');
+        adminConfigWarningLogged = true;
+      }
+      return sendError(res, 401, 'Invalid admin credentials', {
+        code: 'AUTH_INVALID_ADMIN_CREDENTIALS'
+      });
+    }
+
+    const submittedId = typeof req.body?.id === 'string' ? req.body.id.trim() : '';
+    const submittedPassword = typeof req.body?.password === 'string' ? req.body.password.trim() : '';
+    const idMatches = constantTimeMatch(submittedId.toLowerCase(), adminId.toLowerCase());
+    const passwordMatches = constantTimeMatch(submittedPassword, adminPassword);
+
+    if (!(idMatches & passwordMatches)) {
+      return sendError(res, 401, 'Invalid admin credentials', {
+        code: 'AUTH_INVALID_ADMIN_CREDENTIALS'
+      });
+    }
+
+    const token = createToken(null, 'admin');
+    return sendSuccess(res, 200, 'Admin login successful', {
+      token,
+      user: { name: 'Administrator', role: 'admin' }
+    });
+  } catch (error) {
+    return next(error);
   }
 };

@@ -22,6 +22,21 @@ export const authLimiter = rateLimit({
   }
 });
 
+export const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    return res.status(429).json({
+      success: false,
+      message: 'Too many admin login attempts. Please try again after 15 minutes.',
+      data: null,
+      error: { code: 'ADMIN_AUTH_RATE_LIMIT_EXCEEDED' }
+    });
+  }
+});
+
 export const chatLimiter = rateLimit({
   windowMs: CHAT_RATE_LIMIT_WINDOW_MS,
   max: CHAT_RATE_LIMIT_MAX,

@@ -6,6 +6,7 @@ import Doctor from '../models/Doctor.js';
 import Appointment from '../models/Appointment.js';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
 import { APPOINTMENT_STATUSES, DEFAULT_DOCTOR_AVAILABILITY_SLOTS } from '../config/constants.js';
+import { isValidUserId } from '../utils/userId.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const doctorControlPath = path.resolve(__dirname, '../config/doctors-control.json');
@@ -22,6 +23,10 @@ const readBookingControl = () => {
 };
 const hasBookingEntry = (control, bookingId) =>
   Object.prototype.hasOwnProperty.call(control, bookingId);
+
+export const getBookingControlForStatus = readBookingControl;
+export const getAppointmentBookingStatus = (appointment, bookingControl) =>
+  appointment.status === 'approved' ? 'approved' : 'pending';
 
 const toBookingControlEntry = (appointment, patientName = appointment.user?.name || '') => {
   const appointmentDate = appointment.appointmentDate ? new Date(appointment.appointmentDate) : null;
@@ -296,14 +301,17 @@ export const getDoctors = async (_req, res, next) => {
 
 export const getAppointments = async (req, res, next) => {
   try {
+    if (!isValidUserId(req.user?._id)) {
+      return sendSuccess(res, 200, 'Appointments retrieved successfully', { appointments: [] });
+    }
+
     await syncBookingControl();
     const appointments = await Appointment.find({ user: req.user._id })
       .sort({ appointmentDate: 1 })
       .lean();
-    const bookingControl = readBookingControl();
     const appointmentsWithStatus = appointments.map((appointment) => ({
       ...appointment,
-      status: bookingControl[appointment._id.toString()]?.status === 'approved' ? 'approved' : 'pending'
+      status: getAppointmentBookingStatus(appointment)
     }));
 
     return sendSuccess(res, 200, 'Appointments retrieved successfully', { appointments: appointmentsWithStatus });
@@ -314,6 +322,12 @@ export const getAppointments = async (req, res, next) => {
 
 export const createAppointment = async (req, res, next) => {
   try {
+    if (!isValidUserId(req.user?._id)) {
+      return sendError(res, 400, 'Please log in with a user account to book a consultation', {
+        code: 'APPOINTMENT_USER_INVALID'
+      });
+    }
+
     const { doctorId, date, timeSlot, reason } = req.body;
 
     if (!doctorId || !date || !timeSlot) {

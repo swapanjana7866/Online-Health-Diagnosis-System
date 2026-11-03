@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 import textwrap
+from io import BytesIO
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = Path(__file__).resolve().parent
 sys.path.insert(0, str(OUT / 'vendor'))
-os.environ['MPLCONFIGDIR'] = str(OUT / '.mplconfig')
+os.environ['MPLCONFIGDIR'] = str(Path(tempfile.gettempdir()) / 'medinsight-mplconfig')
 Path(os.environ['MPLCONFIGDIR']).mkdir(exist_ok=True)
 
 import matplotlib
@@ -34,6 +37,7 @@ from reportlab.pdfgen.canvas import Canvas
 from xml.sax.saxutils import escape
 
 PDF_PATH = OUT / 'Online_Health_Diagnosis_System_Report.pdf'
+SCREENSHOT_SOURCE = OUT / 'Online_Health_Diagnosis_System_Report_v1.pdf'
 FIG_DIR = OUT / 'figures'
 FIG_DIR.mkdir(exist_ok=True)
 
@@ -48,6 +52,8 @@ PALE = colors.HexColor('#EEF4F7')
 INK = colors.HexColor('#243746')
 MUTED = colors.HexColor('#5E7180')
 LINE = colors.HexColor('#CFD9E0')
+CODE_FONT_SIZE = 10.0
+CODE_LEADING = 12.0
 
 styles = getSampleStyleSheet()
 styles.add(ParagraphStyle(name='BodyX', fontName='Arial', fontSize=9.1, leading=13.1, textColor=INK, spaceAfter=6))
@@ -77,11 +83,11 @@ def safe_text(value):
 
 class CodeBlock(Flowable):
     """Paginated shaded source block with preserved line breaks and indentation."""
-    def __init__(self, source, font_size=5.4, leading=7.0, pad=5):
+    def __init__(self, source, font_size=CODE_FONT_SIZE, leading=CODE_LEADING, pad=5):
         super().__init__()
         self.source_lines = source.splitlines() or ['']
-        self.font_size = font_size
-        self.leading = leading
+        self.font_size = CODE_FONT_SIZE
+        self.leading = CODE_LEADING
         self.pad = pad
         self.lines = []
         self.width = 0
@@ -89,16 +95,40 @@ class CodeBlock(Flowable):
 
     def wrap(self, avail_width, avail_height):
         self.width = avail_width
-        max_chars = max(24, int((avail_width - 2 * self.pad) / (self.font_size * 0.61)))
+        max_width = avail_width - 2 * self.pad
         self.lines = []
         for source_line in self.source_lines:
             if not source_line:
                 self.lines.append('')
                 continue
-            wrapped = textwrap.wrap(source_line, width=max_chars, subsequent_indent='    ',
-                                    replace_whitespace=False, drop_whitespace=False,
-                                    break_long_words=True, break_on_hyphens=False)
-            self.lines.extend(wrapped or [''])
+            # Preserve source indentation and real line breaks. Wrap only at
+            # whitespace where possible; hard-break unusually long tokens by
+            # measured glyph width so no text crosses the shaded block edge.
+            continuation = '    '
+            remaining = source_line
+            first = True
+            while remaining:
+                prefix = '' if first else continuation
+                limit = max_width - pdfmetrics.stringWidth(prefix, 'Consolas', self.font_size)
+                if pdfmetrics.stringWidth(remaining, 'Consolas', self.font_size) <= limit:
+                    self.lines.append(prefix + remaining)
+                    break
+                split_at = 0
+                last_space = -1
+                for index, char in enumerate(remaining):
+                    if char.isspace():
+                        last_space = index
+                    if pdfmetrics.stringWidth(remaining[:index + 1], 'Consolas', self.font_size) > limit:
+                        break
+                    split_at = index + 1
+                if split_at == 0:
+                    split_at = 1
+                if last_space > 0 and last_space <= split_at:
+                    split_at = last_space + 1
+                chunk = remaining[:split_at]
+                self.lines.append(prefix + chunk)
+                remaining = remaining[split_at:]
+                first = False
         self.height = len(self.lines) * self.leading + 2 * self.pad
         return self.width, self.height
 
@@ -167,7 +197,7 @@ def heading(text, level=0):
     return item
 
 
-def code_file(story, rel_path, explanation=None, font_size=5.25):
+def code_file(story, rel_path, explanation=None):
     path = ROOT / rel_path
     if not path.exists():
         story.append(p(f'<b>Source file unavailable:</b> {safe_text(rel_path)}', 'SmallX'))
@@ -180,8 +210,8 @@ def code_file(story, rel_path, explanation=None, font_size=5.25):
     source = re.sub(r"(?i)(\b(?:GEMINI_API_KEY|JWT_SECRET|MONGODB_URI|DATABASE_URL|API_KEY|APIKEY|ACCESS_TOKEN|REFRESH_TOKEN)\b\s*[:=]\s*)(['\"])[^'\"]*\2", r"\1'[REDACTED]'", source)
     source = re.sub(r"(?i)(\bpassword\b\s*:\s*)(['\"])[^'\"]*\2", r"\1'[REDACTED]'", source)
     source = re.sub(r"(?i)(\btoken\b\s*:\s*)(['\"])(?:eyJ[^'\"]*|[^'\"]{16,})\2", r"\1'[REDACTED]'", source)
-    story.append(CodeBlock(source, font_size=font_size))
-    story.append(Spacer(1, 5))
+    story.append(CodeBlock(source))
+    story.append(Spacer(1, 10))
 
 
 def make_figure(name, title, nodes, edges, direction='LR', note=None, shapes=None):
@@ -288,6 +318,61 @@ def table(data, widths=None, repeatRows=1, font=7.4):
 def add_labelled_figure(story, path, caption):
     story.append(image_figure(path))
     story.append(p(escape(caption), 'CaptionX'))
+
+
+def extract_ui_screenshots():
+    """Read the supplied report screenshots, omitting its repeated booking image."""
+    import pymupdf
+
+    page_images = {
+        'Admin Panel': (31, 2154),
+        'Prediction Result': (32, 2170),
+        'Chatbot': (32, 2172),
+        'Doctor Availability': (33, 2188),
+        'Booking Control': (33, 2190),
+    }
+    if not SCREENSHOT_SOURCE.exists():
+        return {}
+    source = pymupdf.open(SCREENSHOT_SOURCE)
+    result = {}
+    for title, (page_number, xref) in page_images.items():
+        if page_number >= len(source):
+            continue
+        data = source.extract_image(xref).get('image')
+        if data:
+            result[title] = data
+    source.close()
+    return result
+
+
+def add_ui_screenshots(story, screenshots):
+    """Lay out two readable, captioned screenshots per row in normal flow."""
+    if not screenshots:
+        return
+    cells = []
+    max_width = (A4[0] - 36 * mm) / 2 - 10
+    max_height = 145
+    for title, data in screenshots.items():
+        image = Image(BytesIO(data))
+        scale = min(max_width / image.imageWidth, max_height / image.imageHeight)
+        image.drawWidth = image.imageWidth * scale
+        image.drawHeight = image.imageHeight * scale
+        image.hAlign = 'CENTER'
+        cells.append([image, p(escape(title), 'CaptionX')])
+    while len(cells) % 2:
+        cells.append('')
+    rows = [cells[i:i + 2] for i in range(0, len(cells), 2)]
+    screenshot_table = Table(rows, colWidths=[(A4[0] - 36 * mm) / 2] * 2,
+                             hAlign='CENTER', splitByRow=1)
+    screenshot_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(screenshot_table)
 
 
 def build_figures():
@@ -408,13 +493,14 @@ def create_story(figs):
     add_schema(s)
     add_labelled_figure(s,figs['er'],'Figure 7. Mongoose relationship summary. Embedded diagnosis subdocuments are omitted for readability.')
     s += [heading('8. Front End',0),p('The route map is defined in `frontend/src/routes/AppRouter.jsx`. `/` redirects to `/dashboard` for authenticated users and `/login` otherwise. The dashboard, diagnosis, profile, chatbot, and appointments pages are protected. No browser screenshot was generated in this report build; clearly marked screenshot placeholders are provided below.'),
-          heading('Home / Symptom Input',1),p('The home workspace is the Dashboard page. Symptom entry and returned assessment are implemented by DiagnosisForm; the project does not have a distinct home or report component file.'),p('[Screenshot: Home / Dashboard]'),p('[Screenshot: Symptom Input and Prediction Report]'),
+          heading('Home / Symptom Input',1),p('The home workspace is the Dashboard page. Symptom entry and returned assessment are implemented by DiagnosisForm; the project does not have a distinct home or report component file.'),
           heading('Prediction Report',1),p('DiagnosisForm renders the API assessment response, candidate information, safety advice, and disclaimer in the symptom workflow. It is not a separate route.'),
-          heading('Doctor Consultations and Booking Details',1),p('The appointments route combines doctor discovery, slot selection, booking submission, and appointment details/status. There is no separate doctor directory page in the route map.'),p('[Screenshot: Doctor Consultations]'),p('[Screenshot: Booking Details]'),
-          heading('Chatbot',1),p('The chatbot page keeps local message, symptom, and conversation state; it sends requests to the chat API and supports a handoff to appointments.'),p('[Screenshot: Chatbot]'),
-          heading('Sign In and Sign Up',1),p('Login and Signup share the AuthShell component from Login.jsx and use AuthContext plus authService. They navigate into the dashboard after successful authentication.'),p('[Screenshot: Sign In]'),p('[Screenshot: Sign Up]')]
+          heading('Doctor Consultations and Booking Details',1),p('The appointments route combines doctor discovery, slot selection, booking submission, and appointment details/status. There is no separate doctor directory page in the route map.'),
+          heading('Chatbot',1),p('The chatbot page keeps local message, symptom, and conversation state; it sends requests to the chat API and supports a handoff to appointments.'),
+          heading('Sign In and Sign Up',1),p('Login and Signup share the AuthShell component from Login.jsx and use AuthContext plus authService. They navigate into the dashboard after successful authentication.')]
+    add_ui_screenshots(s, extract_ui_screenshots())
     front=[('frontend/src/pages/Dashboard.jsx','Dashboard workspace, health history, navigation, and page-level state.'),('frontend/src/pages/DiagnosisForm.jsx','Symptom input, request flow, assessment/report rendering, and handoff.'),('frontend/src/pages/Appointments.jsx','Doctor list, appointment form, and booking details/status.'),('frontend/src/pages/Chatbot.jsx','Chat interface, history, requests, suggestions, and triage result display.'),('frontend/src/pages/Login.jsx','Login view and reusable AuthShell.'),('frontend/src/pages/Signup.jsx','Registration view and client-side input checks.'),('frontend/src/routes/AppRouter.jsx','Actual page route composition and protected wrappers.')]
-    for rel,desc in front: code_file(s,rel,desc,5.2)
+    for rel,desc in front: code_file(s,rel,desc)
     s += [heading('9. Back End',0),p('The following appendix-style listings are copied directly from the checked-in source files at report-generation time. They are grouped by path with a brief role statement. Secret-bearing environment files, package lock files, binary models, private control files, build output, and dependency folders are excluded. The two control `.example.json` files are represented only by one harmless example each.')]
     source_groups=[
       ('API entry point and utility',[('backend/server.js','Express application setup, routes, security middleware, database startup, and shutdown.'),('backend/utils/apiResponse.js','Standard success and error response envelopes.')]),
@@ -433,18 +519,18 @@ def create_story(figs):
                     payload=json.loads(path.read_text(encoding='utf-8'))
                     sample={next(iter(payload)):next(iter(payload.values()))}
                     source=json.dumps(sample,indent=2,ensure_ascii=False)
-                    s.append(heading(safe_text(rel),2)); s.append(p(escape(desc),'SmallX')); s.append(CodeBlock(source,5.3))
+                    s.append(heading(safe_text(rel),2)); s.append(p(escape(desc),'SmallX')); s.append(CodeBlock(source))
                 except Exception:
                     s.append(p(f'Sample unavailable: {safe_text(rel)}','SmallX'))
             else:
-                code_file(s,rel,desc,5.05 if rel.endswith('geminiService.js') else 5.25)
+                code_file(s,rel,desc)
     s += [heading('10. Testing',0),p('The repository’s actual automated checks and this report-generation run are summarized below. Tests were executed from their own service directories. The aggregate Node `npm test` command was attempted, but this environment returned `spawn EPERM` when the Node test runner tried to start separate test-file processes; executing each actual test file directly worked.'),
           heading('Node backend tests',1),bullet('`backend/tests/geminiService.test.js`: 20 passed, 0 failed.'),bullet('`backend/tests/mlService.test.js`: 8 passed, 0 failed. The local ML service was not running; its expected connection failure exercised fallback behavior.'),bullet('`backend/tests/predictionService.test.js`: 15 passed, 0 failed.'),bullet('Direct Node test total: 43 passed, 0 failed. Aggregate `npm test`: runner failed at process spawn (`EPERM`), not an assertion failure.'),
           heading('Python ML tests',1),bullet('`python -m pytest -q` in `ml-service`: 12 passed. Pytest emitted a cache write warning for the workspace; assertions completed successfully.'),
           heading('Frontend checks',1),p('The repository does not define a frontend test script or a frontend test suite. No browser screenshot or UI test is claimed in this report.'),
           heading('Test coverage represented in source',1),p('The checked-in Node tests cover Gemini response parsing and sanitization, confidence interpretation, provider error classification, symptom normalization, ML service outage fallback, prediction-provider orchestration, and fallback behavior. Python tests exercise the ML prediction service. These tests do not establish clinical performance or production readiness.')]
     for rel in ['backend/tests/geminiService.test.js','backend/tests/mlService.test.js','backend/tests/predictionService.test.js','ml-service/tests/test_predict.py']:
-        code_file(s,rel,'Verbatim checked-in test source.',5.2)
+        code_file(s,rel,'Verbatim checked-in test source.')
     s += [heading('11. Conclusion',0),p('Online Health Diagnosis System demonstrates a full-stack implementation connecting user-facing symptom workflows, protected APIs, database-backed records, provider integrations, and a separate machine-learning service. Its modular structure and tests support continued development. It remains a preliminary triage and educational tool; a qualified healthcare professional must assess medical concerns.'),
           heading('Future Scope',1),bullet('Add comprehensive frontend component and browser end-to-end tests, including accessibility review.'),bullet('Add structured audit trails, stronger appointment conflict handling, and clearer operational monitoring.'),bullet('Evaluate the classifier on independently sourced, representative data and publish transparent validation methodology.'),bullet('Add clinician-reviewed content and localized emergency information after jurisdiction-specific review.'),bullet('Complete deployment, privacy, threat-model, and regulatory assessments before any real clinical or patient-facing use.'),
           heading('Bibliography',1),bullet('Project source repository: `frontend/`, `backend/`, and `ml-service/` (implementation inspected for this report).'),bullet('Project requirements: `Docs/PRD.md`; architecture baseline: `Docs/ARCHITECTURE.md`; code rules and standards: `Docs/RULES.md` and `Docs/CODING_STANDARDS.md`.'),bullet('React documentation: https://react.dev/'),bullet('Express documentation: https://expressjs.com/'),bullet('Mongoose documentation: https://mongoosejs.com/docs/'),bullet('Flask documentation: https://flask.palletsprojects.com/'),bullet('scikit-learn documentation: https://scikit-learn.org/stable/'),bullet('Google Gemini API integration reference: https://ai.google.dev/gemini-api/docs (provider configured outside this report; no key included).'),
@@ -453,12 +539,38 @@ def create_story(figs):
 
 
 def main():
+    baseline_path = None
+    if PDF_PATH.exists():
+        handle, baseline_name = tempfile.mkstemp(prefix='medinsight-report-', suffix='.pdf')
+        os.close(handle)
+        baseline_path = Path(baseline_name)
+        shutil.copy2(PDF_PATH, baseline_path)
     figs=build_figures()
     doc=ReportDoc(PDF_PATH)
     doc.multiBuild(create_story(figs))
-    # Count pages from PDF page objects without adding another dependency.
+    if baseline_path:
+        # Keep the current front matter byte-for-byte as page objects, apart
+        # from the freshly generated index pages 2–4 with updated references.
+        from pypdf import PdfReader, PdfWriter
+
+        old_pdf = PdfReader(str(baseline_path))
+        new_pdf = PdfReader(str(PDF_PATH))
+        if len(new_pdf.pages) >= 12 and len(old_pdf.pages) >= 11:
+            writer = PdfWriter()
+            writer.add_page(old_pdf.pages[0])
+            for page_index in range(1, 4):
+                writer.add_page(new_pdf.pages[page_index])
+            for page_index in range(4, 11):
+                writer.add_page(old_pdf.pages[page_index])
+            for page_index in range(11, len(new_pdf.pages)):
+                writer.add_page(new_pdf.pages[page_index])
+            with PDF_PATH.open('wb') as output:
+                writer.write(output)
+        baseline_path.unlink(missing_ok=True)
+    # Count the final page tree (the pre-merge byte scan includes orphaned objects).
     raw=PDF_PATH.read_bytes()
-    pages=len(re.findall(rb'/Type\s*/Page\b',raw))
+    from pypdf import PdfReader
+    pages=len(PdfReader(str(PDF_PATH)).pages)
     print(json.dumps({'pdf':str(PDF_PATH),'pages':pages,'bytes':len(raw),'figures':len(list(FIG_DIR.glob('*.png')))}))
 
 

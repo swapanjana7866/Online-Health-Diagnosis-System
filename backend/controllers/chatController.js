@@ -5,15 +5,16 @@ import { runPrediction } from '../services/predictionService.js';
 import Diagnosis from '../models/Diagnosis.js';
 import { sendSuccess, sendError } from '../utils/apiResponse.js';
 import { CARE_RECOMMENDATIONS, DEFAULT_SYMPTOM_DURATION } from '../config/constants.js';
+import { isValidUserId } from '../utils/userId.js';
 
-/**
- * POST /api/chat/message
- * Processes conversational user messages, extracts clinical symptoms,
- * provides empathetic responses, and optionally runs the prediction flow
- * (Gemini-first with ML/heuristic fallback).
- */
+
+
+
+
 export const handleChatMessage = async (req, res, next) => {
+
   try {
+
     const { message, conversationHistory = [], currentSymptoms = [], action, duration, notes } = req.body;
 
     if (!message && action !== 'evaluate') {
@@ -25,6 +26,8 @@ export const handleChatMessage = async (req, res, next) => {
       conversationHistory,
       currentSymptoms
     });
+
+
 
     let diagnosisResult = null;
 
@@ -39,7 +42,10 @@ export const handleChatMessage = async (req, res, next) => {
         duration: duration || DEFAULT_SYMPTOM_DURATION
       });
 
-      // Unrecognized input → ask the user to clarify, never invent a disease
+
+
+
+     
       if (prediction.needs_clarification) {
         chatResult.reply += `\n\n🤔 **I need a bit more clarity:** ${prediction.clarification_message}`;
         return sendSuccess(res, 200, 'Message processed successfully', {
@@ -94,8 +100,12 @@ export const handleChatMessage = async (req, res, next) => {
         accuracyMetrics: insights?.accuracyMetrics || null
       };
 
-      // Persist to MongoDB if authenticated
-      if (req.user) {
+      
+
+
+
+      
+      if (isValidUserId(req.user?._id)) {
         const record = await Diagnosis.create({
           user: req.user._id,
           symptoms: symptomsToEvaluate,
@@ -141,10 +151,18 @@ export const handleChatMessage = async (req, res, next) => {
         conversationHistory,
         isEmergency: chatResult.isEmergency
       });
+
+
+
+      
+
       if (geminiReply) {
         chatResult.reply = geminiReply;
       }
     }
+
+
+
 
     return sendSuccess(res, 200, 'Message processed successfully', {
       reply: chatResult.reply,

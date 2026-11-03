@@ -1,4 +1,5 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -13,6 +14,9 @@ import { syncBookingControl } from './controllers/doctorController.js';
 import { validatePredictionEnvironment } from './services/predictionService.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { sendSuccess, sendError } from './utils/apiResponse.js';
+import adminRoutes from './routes/adminRoutes.js';
+
+dotenv.config({ path: fileURLToPath(new URL('./.env', import.meta.url)) });
 
 const app = express();
 const basePort = Number(process.env.PORT) || 5000;
@@ -38,6 +42,7 @@ app.use('/api/diagnoses', diagnosisRoutes);
 app.use('/api/diagnosis', diagnosisRoutes);
 app.get('/api/symptoms', getSymptoms);
 app.use('/api/chat', chatRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api', doctorRoutes);
 
 // 404 Route Handler

@@ -58,7 +58,8 @@ api.interceptors.response.use(
 // Auth Service Endpoints
 export const authService = {
   register: (payload) => api.post('/api/auth/register', payload),
-  login: (payload) => api.post('/api/auth/login', payload)
+  login: (payload) => api.post('/api/auth/login', payload),
+  adminLogin: (payload) => api.post('/api/auth/admin-login', payload)
 };
 
 // User Profile Endpoints
@@ -71,6 +72,17 @@ export const appointmentService = {
   getDoctors: () => api.get('/api/doctors'),
   getAppointments: () => api.get('/api/appointments'),
   bookAppointment: (payload) => api.post('/api/appointments', payload)
+};
+
+export const adminService = {
+  getAppointments: () => api.get('/api/admin/appointments'),
+  getDoctors: () => api.get('/api/admin/doctors'),
+  addDoctor: (payload) => api.post('/api/admin/doctors', payload),
+  removeDoctor: (id) => api.delete(`/api/admin/doctors/${encodeURIComponent(id)}`),
+  updateDoctorAvailability: (name, available) =>
+    api.put(`/api/admin/doctors/${encodeURIComponent(name)}/availability`, { available }),
+  updateBookingStatus: (id, status) =>
+    api.put(`/api/admin/bookings/${encodeURIComponent(id)}/status`, { status })
 };
 
 export const diagnosisService = {

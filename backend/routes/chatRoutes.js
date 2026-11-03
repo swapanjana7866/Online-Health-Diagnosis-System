@@ -5,6 +5,7 @@ import User from '../models/User.js';
 import { handleChatMessage } from '../controllers/chatController.js';
 import { chatLimiter } from '../middleware/rateLimiter.js';
 import { validate } from '../middleware/validateMiddleware.js';
+import { isValidUserId } from '../utils/userId.js';
 import {
   CHAT_MAX_HISTORY_ENTRIES,
   CHAT_MAX_MESSAGE_LENGTH,
@@ -24,7 +25,9 @@ const optionalAuth = async (req, _res, next) => {
     try {
       const token = authHeader.split(' ')[1];
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(decoded.id).lean();
+      if (isValidUserId(decoded.id)) {
+        req.user = await User.findById(decoded.id).lean();
+      }
     } catch (_e) {
       // Invalid token → proceed without user (anonymous mode)
     }
